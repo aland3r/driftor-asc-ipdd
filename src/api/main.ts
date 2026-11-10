@@ -6,7 +6,9 @@ import { DomainErrorFilter } from './domain-error.filter';
 import { INestApplication } from '@nestjs/common';
 
 export function configure(app: INestApplication): INestApplication {
-  app.enableCors({ origin: (process.env.CORS_ORIGINS ?? '*').split(',') });
+  // "*" numa lista não casa com nenhuma origem no pacote cors: sem lista, libera todas.
+  const origins = (process.env.CORS_ORIGINS ?? '*').split(',').map((o) => o.trim()).filter(Boolean);
+  app.enableCors({ origin: origins.includes('*') ? true : origins });
   app.useGlobalFilters(new DomainErrorFilter());
   const config = new DocumentBuilder()
     .setTitle('Driftor ASC · ipdd')
