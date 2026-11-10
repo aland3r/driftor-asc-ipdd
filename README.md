@@ -92,6 +92,4 @@ A cada push na `main`, o GitHub Actions roda os testes, publica a imagem no Dock
 ## Grupo
 
 - Alander Menezes Arantes de Ávila
-- Bernardo Creplive Vieira
 - Emanuelle Skolut Jose
-- Murilo Regnier Stange
