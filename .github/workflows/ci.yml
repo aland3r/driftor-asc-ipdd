@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  IMAGE: docker.io/aland3r/driftor-asc-ipdd
+  APP: driftor-asc-ipdd
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: testes unitários, e2e e de arquitetura
+        run: npm test
+
+  image:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: verifica secrets do docker hub
+        id: hub
+        run: echo "ok=${{ secrets.DOCKERHUB_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        if: steps.hub.outputs.ok == 'true'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        if: steps.hub.outputs.ok == 'true'
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:v1
+            ${{ env.IMAGE }}:${{ github.sha }}
+
+  deploy:
+    needs: image
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: verifica token do fly
+        id: fly
+        run: echo "ok=${{ secrets.FLY_API_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: steps.fly.outputs.ok == 'true'
+      - name: cria o app no fly (primeira vez)
+        if: steps.fly.outputs.ok == 'true'
+        run: flyctl apps create "$APP" || true
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: secrets do serviço
+        if: steps.fly.outputs.ok == 'true'
+        run: |
+          args=("PMINING_URL=https://driftor-asc-pmining.fly.dev")
+          [ -n "$AZURE_SQL_CONNECTION" ] && args+=("AZURE_SQL_CONNECTION=$AZURE_SQL_CONNECTION")
+          [ -n "$SERVICEBUS_CONNECTION" ] && args+=("SERVICEBUS_CONNECTION=$SERVICEBUS_CONNECTION")
+          flyctl secrets set --stage -a "$APP" "${args[@]}"
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          AZURE_SQL_CONNECTION: ${{ secrets.AZURE_SQL_CONNECTION }}
+          SERVICEBUS_CONNECTION: ${{ secrets.SERVICEBUS_CONNECTION }}
+      - name: deploy a partir da imagem do docker hub
+        if: steps.fly.outputs.ok == 'true'
+        run: flyctl deploy --remote-only --image ${{ env.IMAGE }}:${{ github.sha }} --ha=false
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

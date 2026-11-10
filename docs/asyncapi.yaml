@@ -1,0 +1,114 @@
+asyncapi: 3.0.0
+info:
+  title: Driftor ASC · eventos
+  version: 1.0.0
+  description: |
+    Filas do Azure Service Bus (namespace driftor-asc-bus, plano Basic) usadas pelo Driftor ASC.
+    Cada fila tem um único consumidor. A análise de desvios é assíncrona: o ipdd pede, a
+    Function calcula e devolve; a exclusão de um processo no pmining apaga as análises dele no ipdd.
+servers:
+  azure:
+    host: driftor-asc-bus.servicebus.windows.net
+    protocol: amqps
+    description: Azure Service Bus, Brazil South
+channels:
+  analysisRequested:
+    address: analysis-requested
+    messages:
+      analysisRequested:
+        $ref: '#/components/messages/AnalysisRequested'
+  analysisCompleted:
+    address: analysis-completed
+    messages:
+      analysisCompleted:
+        $ref: '#/components/messages/AnalysisCompleted'
+  processDeleted:
+    address: process-deleted
+    messages:
+      processDeleted:
+        $ref: '#/components/messages/ProcessDeleted'
+operations:
+  requestAnalysis:
+    action: send
+    summary: O ipdd pede o cálculo do ADWIN ao criar a análise.
+    channel:
+      $ref: '#/channels/analysisRequested'
+  computeAnalysis:
+    action: receive
+    summary: A Function fn-adwin consome o pedido (Service Bus trigger).
+    channel:
+      $ref: '#/channels/analysisRequested'
+  completeAnalysis:
+    action: send
+    summary: A Function devolve desvios, outliers e série tratada, ou a falha.
+    channel:
+      $ref: '#/channels/analysisCompleted'
+  storeAnalysis:
+    action: receive
+    summary: O ipdd grava o resultado no Azure SQL (idempotente pelo analysisId).
+    channel:
+      $ref: '#/channels/analysisCompleted'
+  announceProcessDeleted:
+    action: send
+    summary: O pmining avisa que um processo foi excluído.
+    channel:
+      $ref: '#/channels/processDeleted'
+  purgeProcessAnalyses:
+    action: receive
+    summary: O ipdd apaga as análises do processo.
+    channel:
+      $ref: '#/channels/processDeleted'
+components:
+  messages:
+    AnalysisRequested:
+      name: analysis-requested
+      contentType: application/json
+      payload:
+        type: object
+        required: [type, analysisId, processId, values, delta, treatment]
+        properties:
+          type: { type: string, const: analysis-requested }
+          analysisId: { type: string, format: uuid }
+          processId: { type: string }
+          values: { type: array, items: { type: number }, description: Uma observação por trace, em ordem de tempo }
+          delta: { type: number, example: 0.002 }
+          treatment: { type: string, enum: [raw, treated] }
+          requestedAt: { type: string, format: date-time }
+    AnalysisCompleted:
+      name: analysis-completed
+      contentType: application/json
+      payload:
+        type: object
+        required: [type, analysisId, status]
+        properties:
+          type: { type: string, const: analysis-completed }
+          analysisId: { type: string, format: uuid }
+          status: { type: string, enum: [concluida, falhou] }
+          error: { type: string }
+          observationCount: { type: integer }
+          smoothingWindow: { type: integer }
+          processedValues: { type: array, items: { type: number } }
+          outlierIndices: { type: array, items: { type: integer } }
+          drifts:
+            type: array
+            items:
+              type: object
+              properties:
+                index: { type: integer }
+                anomalyStartIndex: { type: integer }
+                value: { type: number }
+                width: { type: number }
+                estimation: { type: number }
+                meanBefore: { type: number }
+                meanAfter: { type: number }
+                changePercent: { type: number }
+    ProcessDeleted:
+      name: process-deleted
+      contentType: application/json
+      payload:
+        type: object
+        required: [type, processId]
+        properties:
+          type: { type: string, const: process-deleted }
+          processId: { type: string }
+          occurredAt: { type: string, format: date-time }
